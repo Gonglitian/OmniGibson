@@ -159,6 +159,24 @@ def _launch_app():
     lazy.omni.isaac.core.utils.extensions.enable_extension("omni.flowusd")
     lazy.omni.isaac.core.utils.extensions.enable_extension("omni.particle.system.bundle")
 
+    # Extra extensions for people
+    EXTENSIONS_PEOPLE = [
+    'omni.anim.people',
+    'omni.anim.navigation.bundle',
+    'omni.anim.timeline',
+    'omni.anim.graph.bundle',
+    'omni.anim.graph.core',
+    'omni.anim.graph.ui',
+    'omni.anim.retarget.bundle',
+    'omni.anim.retarget.core',
+    'omni.anim.retarget.ui',
+    'omni.kit.scripting',
+    'omni.graph.io',
+    'omni.anim.curve.core',
+    ]
+    for ext_people in EXTENSIONS_PEOPLE:
+        lazy.omni.isaac.core.utils.extensions.enable_extension(ext_people)
+
     # Additional import for windows
     if os.name == "nt":
         lazy.omni.isaac.core.utils.extensions.enable_extension("omni.kit.window.viewport")
@@ -180,6 +198,7 @@ def _launch_app():
         if gm.REMOTE_STREAMING == "native":
             # Enable Native Livestream extension
             # Default App: Streaming Client from the Omniverse Launcher
+            lazy.omni.isaac.core.utils.extensions.enable_extension("omni.isaac.sim.headless.native")
             lazy.omni.isaac.core.utils.extensions.enable_extension("omni.kit.livestream.native")
             print(f"Now streaming on {ip} via Omniverse Streaming Client")
         elif gm.REMOTE_STREAMING == "webrtc":
@@ -187,7 +206,7 @@ def _launch_app():
             app.set_setting("/exts/omni.services.transport.server.http/port", gm.HTTP_PORT)
             app.set_setting("/app/livestream/port", gm.WEBRTC_PORT)
             lazy.omni.isaac.core.utils.extensions.enable_extension("omni.services.streamclient.webrtc")
-            print(f"Now streaming on: http://{ip}:{gm.HTTP_PORT}/streaming/webrtc-client?server={ip}")
+            # print(f"Now streaming on: http://{ip}:{gm.HTTP_PORT}/streaming/webrtc-client?server={ip}")
         else:
             raise ValueError(
                 f"Invalid REMOTE_STREAMING option {gm.REMOTE_STREAMING}. Must be one of None, native, webrtc."
