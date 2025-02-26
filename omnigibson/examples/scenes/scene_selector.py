@@ -9,6 +9,9 @@ gm.ENABLE_FLATCACHE = True
 gm.ENABLE_OBJECT_STATES = False
 gm.ENABLE_TRANSITION_RULES = False
 
+gm.REMOTE_STREAMING = "native"
+gm.HEADLESS = True
+
 
 def main(random_selection=False, headless=False, short_exec=False):
     """

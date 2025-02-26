@@ -1,8 +1,8 @@
 import omnigibson as og
 from omnigibson.macros import gm
 
-gm.REMOTE_STREAMING = "native"
 gm.HEADLESS = True
+gm.REMOTE_STREAMING = "native"
 
 cfg = dict()
 

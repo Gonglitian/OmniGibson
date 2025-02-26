@@ -198,15 +198,16 @@ def _launch_app():
         if gm.REMOTE_STREAMING == "native":
             # Enable Native Livestream extension
             # Default App: Streaming Client from the Omniverse Launcher
-            lazy.omni.isaac.core.utils.extensions.enable_extension("omni.isaac.sim.headless.native")
-            lazy.omni.isaac.core.utils.extensions.enable_extension("omni.kit.livestream.native")
+            lazy.omni.isaac.core.utils.extensions.enable_extension("omni.kit.streamsdk.plugins-3.2.1")
+            lazy.omni.isaac.core.utils.extensions.enable_extension("omni.kit.livestream.core-3.2.0")
+            lazy.omni.isaac.core.utils.extensions.enable_extension("omni.kit.livestream.native-4.1.0")
             print(f"Now streaming on {ip} via Omniverse Streaming Client")
         elif gm.REMOTE_STREAMING == "webrtc":
             # Enable WebRTC Livestream extension
             app.set_setting("/exts/omni.services.transport.server.http/port", gm.HTTP_PORT)
             app.set_setting("/app/livestream/port", gm.WEBRTC_PORT)
             lazy.omni.isaac.core.utils.extensions.enable_extension("omni.services.streamclient.webrtc")
-            # print(f"Now streaming on: http://{ip}:{gm.HTTP_PORT}/streaming/webrtc-client?server={ip}")
+            print(f"Now streaming on: http://{ip}:{gm.HTTP_PORT}/streaming/webrtc-client?server={ip}")
         else:
             raise ValueError(
                 f"Invalid REMOTE_STREAMING option {gm.REMOTE_STREAMING}. Must be one of None, native, webrtc."
