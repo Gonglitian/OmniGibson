@@ -368,3 +368,19 @@ class Person:
 
         carb.log_error("Unable to file a .usd file in {} character folder".format(
             character_folder_path))
+
+    def get_position(self):
+        """Returns the current position of the person in the world.
+
+        Returns:
+            list: A list with the x, y, z coordinates of the person.
+        """
+        return self._state.position
+
+    def get_target_position(self):
+        """Returns the current target position of the person in the world.
+
+        Returns:
+            list: A list with the x, y, z coordinates of the person.
+        """
+        return self._target_position

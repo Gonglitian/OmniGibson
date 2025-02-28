@@ -70,8 +70,6 @@ p1 = Person("person1", "original_male_adult_construction_05", init_pos=[
 p2 = Person("person2", "original_female_adult_business_02",
             init_pos=[2.0, 0.0, 0.0])
 
-print(PeopleManager._people)
-
 p2.update_target_position([10.0, 0.0, 0.0], 1.0)
 
 og.sim.enable_viewer_camera_teleoperation()

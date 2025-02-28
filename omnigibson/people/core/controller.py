@@ -4,7 +4,6 @@
 | Description: Base controller class that should be inherited to create a custom controller behaviour for a person in the simulation.
 | License: BSD-3-Clause. Copyright (c) 2024, Marcelo Jacinto. All rights reserved.
 """
-
 class PersonController:
 
     def __init__(self):
