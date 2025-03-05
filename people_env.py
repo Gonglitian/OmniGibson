@@ -11,12 +11,38 @@ gm.REMOTE_STREAMING = "native"
 
 cfg = dict()
 
+cfg["env"] = {
+    "device": "cpu",
+}
+
 cfg["scene"] = {
     "type": "Scene",
     # "scene_model": "Rs_int",
     "floor_plane_visible": True,
 }
 
+cfg["objects"] = [
+    {
+        "type": "USDObject",
+        "name": "ghost_stain",
+        "usd_path": f"{gm.ASSET_PATH}/models/stain/stain.usd",
+        "category": "stain",
+        "visual_only": True,
+        "scale": [1.0, 1.0, 1.0],
+        "position": [1.0, 2.0, 0.001],
+        "orientation": [0, 0, 0, 1.0],
+    },
+]
+
+cfg["robots"] = [
+    {
+        "type": "Fetch",
+        "name": "skynet_robot",
+        "obs_modalities": ["rgb", "depth"],
+        "default_arm_pose": "diagonal30",
+        "default_reset_mode": "tuck",
+    },
+]
 env = og.Environment(cfg)
 
 from omnigibson.people import Person
@@ -47,7 +73,7 @@ PERSON_MODELS = [
 ]
 
 
-def orca_velocity(person:Person, neighbors, time_horizon=5.0):
+def orca_velocity(person:Person, neighbors:List[Person], time_horizon=5.0):
     """
     简化版 ORCA 算法：
       1. 根据当前位置和目标位置计算期望速度；
@@ -63,7 +89,7 @@ def orca_velocity(person:Person, neighbors, time_horizon=5.0):
     
     direction = target_2d - pos_2d
     norm = np.linalg.norm(direction)
-    max_speed = getattr(person, 'max_speed', 0.1)
+    max_speed = getattr(person, 'max_speed', 1)
     if norm < 1e-5:
         v_pref = np.zeros(2)
     else:
@@ -99,9 +125,6 @@ class OmnigibsonPedestrianEnv(gym.Env):
     def __init__(self, num_persons=5, area_size=(10, 10)):
         super(OmnigibsonPedestrianEnv, self).__init__()
         self._world = World()
-
-        self._world.add_physics_callback(
-            "people_step", self.step)
         
         self.num_persons = num_persons
         self.area_size = area_size
@@ -136,10 +159,16 @@ class OmnigibsonPedestrianEnv(gym.Env):
             # 创建 Person 对象，注意构造函数参数需与 omnigibson 的定义一致
             person = Person(name, model_name, init_pos=init_pos.tolist(), init_yaw=init_yaw)
 
-            person.update_target_position(target_pos.tolist(), 0.0)
+            person.update_target_position(target_pos.tolist())
             # 添加到 PeopleManager 中
             self.people.append(person)
+        # p2 = Person("person2", "original_male_adult_construction_05", init_pos=[
+        #         3.0, 0.0, 0.0], init_yaw=1.0)
+        # self.people.append(p1)
 
+        self._world.add_physics_callback(
+            "people_step", self.step)
+        
     def reset(self):
         self.people = []
         self._init_people()
@@ -168,7 +197,7 @@ class OmnigibsonPedestrianEnv(gym.Env):
             neighbors = [other for other in self.people if other != person]
             v = orca_velocity(person, neighbors)
             velocities.append(v)
-        
+        print("velocities:", velocities)
         # 通过v和dt计算行人目标位置
         for person, v in zip(self.people, velocities):
             pos = person.get_position()
@@ -192,8 +221,9 @@ class OmnigibsonPedestrianEnv(gym.Env):
         return obs, reward, done, info
 
 people_sim_env = OmnigibsonPedestrianEnv(num_persons=2, area_size=(10, 10))
-people_sim_env = env.reset()
-
+    
+# p1 = Person("person1", "original_male_adult_construction_05", init_pos=[
+#                 3.0, 0.0, 0.0], init_yaw=1.0)
 
 og.sim.enable_viewer_camera_teleoperation()
 
