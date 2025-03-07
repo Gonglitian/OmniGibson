@@ -21,28 +21,6 @@ cfg["scene"] = {
     "floor_plane_visible": True,
 }
 
-cfg["objects"] = [
-    {
-        "type": "USDObject",
-        "name": "ghost_stain",
-        "usd_path": f"{gm.ASSET_PATH}/models/stain/stain.usd",
-        "category": "stain",
-        "visual_only": True,
-        "scale": [1.0, 1.0, 1.0],
-        "position": [1.0, 2.0, 0.001],
-        "orientation": [0, 0, 0, 1.0],
-    },
-]
-
-cfg["robots"] = [
-    {
-        "type": "Fetch",
-        "name": "skynet_robot",
-        "obs_modalities": ["rgb", "depth"],
-        "default_arm_pose": "diagonal30",
-        "default_reset_mode": "tuck",
-    },
-]
 env = og.Environment(cfg)
 
 from omnigibson.people import Person
@@ -215,6 +193,7 @@ class PeopleEnv(gym.Env):
         #     # 添加到 PeopleManager 中
         #     self.people.append(person)
         #     self.policies.append(policy)
+
         # 2 persons test case
         p1 = self.spawn_person("person1","original_male_adult_construction_05",[0,0,0],0)
         p2 = self.spawn_person("person2","original_male_adult_construction_05",[10,0,0],0)
@@ -265,10 +244,7 @@ class PeopleEnv(gym.Env):
         info = {}
         return obs, reward, done, info
 
-people_sim_env = PeopleEnv(num_persons=4, area_size=(20, 20))  # 使用20x20的区域大小
-    
-# p1 = Person("person1", "original_male_adult_construction_05", init_pos=[
-#                 3.0, 0.0, 0.0], init_yaw=1.0)
+people_sim_env = PeopleEnv(num_persons=2, area_size=(100, 100))
 
 og.sim.enable_viewer_camera_teleoperation()
 
