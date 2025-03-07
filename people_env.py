@@ -78,6 +78,13 @@ class PersonAction:
     speed: float = None
     velocity: np.ndarray = None
 
+    def __post_init__(self):
+        """
+        验证 target_position 和 velocity 不能同时有值
+        """
+        if (self.target_position is not None) and (self.velocity is not None):
+            raise ValueError("target_position and velocity cannot be both set in PersonAction")
+
 def orca_policy(person:Person, neighbors:List[Person], time_horizon=5.0):
     """
     简化版 ORCA 算法：
@@ -115,13 +122,13 @@ def orca_policy(person:Person, neighbors:List[Person], time_horizon=5.0):
     speed = np.linalg.norm(new_velocity)
     if speed > max_speed:
         new_velocity = new_velocity / speed * max_speed
-    return PersonAction(new_velocity=np.array([new_velocity[0],new_velocity[1],0.0]))
+    return PersonAction(velocity=np.array([new_velocity[0],new_velocity[1],0.0]))
 
 def default_policy(person:Person, neighbors:List[Person], time_horizon=5.0)->PersonAction: 
-    return PersonAction(new_target_position=person._target_position)
+    return PersonAction(target_position=person.target_position)
 
 class PeoplePolicy:
-    def __init__(self, person: Person,policy_type="orca"):
+    def __init__(self, person: Person,policy_type="default"):
         self.person = person
         self.radius = 0.3     # 行人半径
         self.neighbors = []   # 邻近的其他行人
@@ -140,13 +147,11 @@ class PeoplePolicy:
     def update(self, dt: float):
         """更新行人状态"""
         # 计算新的速度
-        action = self.generate_action()
+        action = self.generate_action(self.person,self.neighbors)
         self.implement_action(action,dt)
 
 
     def implement_action(self, action:PersonAction,dt:float):
-        if action.target_position and action.velocity:
-            raise ValueError("target_position and velocity cannot be both set")
         if action.target_position is not None:
             self.person.temp_target_position = action.target_position
         if action.velocity is not None:
@@ -182,36 +187,51 @@ class PeopleEnv(gym.Env):
         self.people: List[Person] = []
         self.policies: List[PeoplePolicy] = []  # 存储每个行人的策略
         self._init_people()
-
-    def _init_people(self):
-        """
-        初始化行人：随机生成行人的初始位置与目标，
-        """
-        for i in range(self.num_persons):
-            # 随机生成三维初始位置（假设 z 均为 0）
-            init_pos = np.random.uniform(0, self.area_size[0], size=3)
-            init_pos[2] = 0.0
-            target_pos = np.random.uniform(0, self.area_size[0], size=3)
-            target_pos[2] = 0.0
-            
-            name = f"person_{i}"
-            model_name = np.random.choice(PERSON_MODELS)
-            # print(f"Creating person {name} with model {model_name}")
-            init_yaw = np.random.uniform(-np.pi, np.pi)
-            # 创建 Person 对象，注意构造函数参数需与 omnigibson 的定义一致
-            person = Person(name, model_name, init_pos=init_pos.tolist(), init_yaw=init_yaw)
-
-            person.update_target_position(target_pos.tolist())
-            # 创建并存储策略控制器
-            policy = PeoplePolicy(person)
-            # 添加到 PeopleManager 中
-            self.people.append(person)
-            self.policies.append(policy)
-
         # 添加物理回调
         self._world.add_physics_callback(
             "people_step", self.step)
         
+    def _init_people(self):
+        # """
+        # 初始化行人：随机生成行人的初始位置与目标，
+        # """
+        # for i in range(self.num_persons):
+        #     # 随机生成三维初始位置（假设 z 均为 0）
+        #     init_pos = np.random.uniform(0, self.area_size[0], size=3)
+        #     init_pos[2] = 0.0
+        #     target_pos = np.random.uniform(0, self.area_size[0], size=3)
+        #     target_pos[2] = 0.0
+            
+        #     name = f"person_{i}"
+        #     model_name = np.random.choice(PERSON_MODELS)
+        #     # print(f"Creating person {name} with model {model_name}")
+        #     init_yaw = np.random.uniform(-np.pi, np.pi)
+        #     # 创建 Person 对象，注意构造函数参数需与 omnigibson 的定义一致
+        #     person = Person(name, model_name, init_pos=init_pos.tolist(), init_yaw=init_yaw)
+
+        #     person.update_target_position(target_pos.tolist())
+        #     # 创建并存储策略控制器
+        #     policy = PeoplePolicy(person,policy_type="default")
+        #     # 添加到 PeopleManager 中
+        #     self.people.append(person)
+        #     self.policies.append(policy)
+        # 2 persons test case
+        p1 = self.spawn_person("person1","original_male_adult_construction_05",[0,0,0],0)
+        p2 = self.spawn_person("person2","original_male_adult_construction_05",[10,0,0],0)
+        p3 = self.spawn_person("person3","original_male_adult_construction_05",[0,10,0],0)
+        p4 = self.spawn_person("person4","original_male_adult_construction_05",[10,10,0],0)
+        p1.update_target_position([10,10,0])
+        p2.update_target_position([0,10,0])
+        p3.update_target_position([10,0,0])
+        p4.update_target_position([0,0,0])
+
+
+    def spawn_person(self,name,model_name,init_pos,init_yaw,policy_type="default"):
+        person = Person(name, model_name, init_pos=init_pos, init_yaw=init_yaw)
+        self.people.append(person)
+        self.policies.append(PeoplePolicy(person,policy_type="default"))
+        return person
+    
     def reset(self):
         self.people = []
         self._init_people()
@@ -224,8 +244,8 @@ class PeopleEnv(gym.Env):
         """
         obs = np.zeros((self.num_persons, 4), dtype=np.float32)
         for i, person in enumerate(self.people):
-            pos = np.array(person.get_position())[:2]
-            target = np.array(person.get_target_position())[:2]
+            pos = person.position[:2]
+            target = person.temp_target_position[:2]
             obs[i] = np.concatenate([pos, target])
         return obs
 
@@ -245,7 +265,7 @@ class PeopleEnv(gym.Env):
         info = {}
         return obs, reward, done, info
 
-people_sim_env = PeopleEnv(num_persons=2, area_size=(10, 10))
+people_sim_env = PeopleEnv(num_persons=4, area_size=(20, 20))  # 使用20x20的区域大小
     
 # p1 = Person("person1", "original_male_adult_construction_05", init_pos=[
 #                 3.0, 0.0, 0.0], init_yaw=1.0)
