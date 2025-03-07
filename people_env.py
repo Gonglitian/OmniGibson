@@ -65,42 +65,9 @@ class PersonAction:
 
 def orca_policy(person:Person, neighbors:List[Person], time_horizon=5.0):
     """
-    简化版 ORCA 算法：
-      1. 根据当前位置和目标位置计算期望速度；
-      2. 对于靠得较近的邻居增加一个排斥项，避免碰撞；
-      3. 将合成速度裁剪到行人的最大速度范围内。
-    假设 Person 对象提供 position 与 target_position 属性  
-    同时包含属性 max_speed（默认 0.1）和 radius（默认 0.3）。
+    ORCA Policy
     """
-    pos = np.array(person.position)    # [x, y, z]
-    target = np.array(person.target_position)  # [x, y, z]
-    pos_2d = pos[:2]
-    target_2d = target[:2]
-    
-    direction = target_2d - pos_2d
-    norm = np.linalg.norm(direction)
-    max_speed = getattr(person, 'max_speed', 1)
-    if norm < 1e-5:
-        v_pref = np.zeros(2)
-    else:
-        v_pref = direction / norm * max_speed
-    
-    avoidance = np.zeros(2)
-    for other in neighbors:
-        other_pos = np.array(other.get_position())[:2]
-        diff = pos_2d - other_pos
-        dist = np.linalg.norm(diff)
-        radius = getattr(person, 'radius', 0.3)
-        other_radius = getattr(other, 'radius', 0.3)
-        combined_radius = radius + other_radius
-        if dist < combined_radius * 1.5:
-            if dist > 1e-5:
-                avoidance += (diff / dist) * (combined_radius - dist)
-    new_velocity = v_pref + avoidance
-    speed = np.linalg.norm(new_velocity)
-    if speed > max_speed:
-        new_velocity = new_velocity / speed * max_speed
-    return PersonAction(velocity=np.array([new_velocity[0],new_velocity[1],0.0]))
+    return PersonAction(...)
 
 def default_policy(person:Person, neighbors:List[Person], time_horizon=5.0)->PersonAction: 
     return PersonAction(target_position=person.target_position)
