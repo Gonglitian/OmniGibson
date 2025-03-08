@@ -24,13 +24,39 @@ from omni.isaac.core.world import World
 # Extension APIs
 from omnigibson.people.utils.state import State
 from omnigibson.people.core.manager import PeopleManager
-from omnigibson.people.core.controller import PersonController
 
 
 class Person:
     """
-    Class that implements a person in the simulation world. The person can be controlled by a controller that inherits from the PersonController class.
-    """
+        A class representing a simulated person in the OmniGibson environment.
+        
+        This class provides functionality for spawning and controlling animated human characters
+        in the simulation world. It handles character animation, movement, and state management.
+        
+        Key Features:
+            - Character spawning with customizable initial position and orientation
+            - Animation graph integration for realistic movement
+            - Target-based navigation with collision avoidance
+            - State tracking (position, orientation, velocities)
+            - Integration with the OmniGibson physics engine
+        
+        Attributes:
+            state (State): Current state of the person (position, orientation, velocities)
+            character_graph: Animation graph controller for the character
+            _target_position (np.ndarray): Target position the person moves towards
+            _target_speed (float): Desired walking speed
+            _sim_running (bool): Flag indicating if simulation is active
+        
+        Methods:
+            update(dt): Updates person's position and animation state
+            update_target_position(position, walk_speed): Sets new target position and speed
+            get_position(): Returns current position
+            get_target_position(): Returns target position
+            
+        Note:
+            This class is designed to work with the OmniGibson environment and requires
+            proper initialization of the simulation world and animation assets.
+        """
 
     # Get root assets path from setting, if not set, get the Isaac-Sim asset path
     setting_dict = carb.settings.get_settings()
@@ -56,8 +82,7 @@ class Person:
         character_name: str = None,
         init_pos=[0.0, 0.0, 0.0],
         init_yaw=0.0,
-        controller: PersonController = None,
-        backend=None
+        stop_radius=0.1,
     ):
         """Initializes the person object
 
@@ -66,9 +91,8 @@ class Person:
             character_name (str): The name of the person in the USD file. Use the Person.get_character_asset_list() method to get the list of available characters.
             init_pos (list): The initial position of the vehicle in the inertial frame (in ENU convention). Defaults to [0.0, 0.0, 0.0].
             init_yaw (float): The initial orientation of the person in rad. Defaults to 0.0.
-            controller (PersonController): A controller to add some custom behaviour to the movement of the person. Defaults to None.
         """
-
+        self.stop_radius = stop_radius
         # Get the current world at which we want to spawn the vehicle
         self._world = World()
         self._current_stage = self._world.stage
@@ -80,9 +104,10 @@ class Person:
             'z', init_yaw, degrees=False).as_quat()
 
         # Set the target position for the character
-        self._target_position = np.array(init_pos)
-        self._target_speed = 0.0
-
+        self.update_target_position(init_pos)
+        self._target_speed = 1.0
+        # Temp target position
+        self.temp_target_position = np.array(init_pos)
         # Save the name with which the vehicle will appear in the stage
         # and the character model that will be loaded into the simulator
         self._stage_prefix = get_stage_next_free_path(
@@ -102,16 +127,6 @@ class Person:
         self.character_graph = None
         self.add_animation_graph_to_agent()
 
-        # Set the controller for the person if any and initialize it
-        self._controller = controller
-        if self._controller:
-            self._controller.initialize(self)
-
-        # Set the backend for publishing the state of the person
-        self._backend = backend
-        if self._backend:
-            self._backend.initialize(self)
-
         # Add a callback to the physics engine to update the current state of the person
         self._world.add_physics_callback(
             self._stage_prefix + "/state", self.update_state)
@@ -119,7 +134,7 @@ class Person:
         # Add the update method to the physics callback if the world was received
         # so that we can apply the new references to be tracked by the person
         self._world.add_physics_callback(
-            self._stage_prefix + "/update", self.update)
+            self._stage_prefix + "/update", self.update_movement_and_animation)
 
         # Set the flag that signals if the simulation is running or not
         self._sim_running = False
@@ -148,27 +163,11 @@ class Person:
         # If the start/stop button was pressed, then call the start and stop methods accordingly
         if self._world.is_playing() and self._sim_running == False:
             self._sim_running = True
-            self.start()
 
         if self._world.is_stopped() and self._sim_running == True:
             self._sim_running = False
-            self.stop()
 
-    def start(self):
-        """
-        Method that is called when the simulation starts. This method can be used to initialize any variables.
-        """
-        if self._controller:
-            self._controller.start()
-
-    def stop(self):
-        """
-        Method that is called when the simulation stops. This method can be used to reset any variables.
-        """
-        if self._controller:
-            self._controller.stop()
-
-    def update(self, dt: float):
+    def update_movement_and_animation(self, dt: float):
         """
         Method that implements the logic to make the person move around in the simulation world and also play the animation
 
@@ -183,16 +182,13 @@ class Person:
             
         self.character_graph = ag.get_character(
             self.character_skel_root_stage_path)
-        # Call the controller update method that should update the reference of the target position
-        if self._controller:
-            self._controller.update(dt)
 
         # Compute the distance between the current position and the goal position
         distance_to_target_position = np.linalg.norm(
             self._target_position - self._state.position)
 
         # If we are still far away from the target position, keep moving towards it
-        if distance_to_target_position > 0.1:
+        if distance_to_target_position > self.stop_radius:
             self.character_graph.set_variable("Action", "Walk")
             self.character_graph.set_variable("PathPoints", [carb.Float3(
                 self._state.position), carb.Float3(self._target_position)])
@@ -202,11 +198,7 @@ class Person:
             self.character_graph.set_variable("Walk", 0.0)
             self.character_graph.set_variable("Action", "Idle")
 
-        # If we have a backend, update the state of the person
-        if self._backend:
-            self._backend.update(self._state, dt)
-
-    def update_target_position(self, position, walk_speed=1.0):
+    def update_target_position(self, position):
         """
         Method that updates the target position of the person to which it will move towards.
 
@@ -214,7 +206,6 @@ class Person:
             position (list): A list with the x, y, z coordinates of the target position.
         """
         self._target_position = np.array(position)
-        self._target_speed = walk_speed
 
     def update_state(self, dt: float):
         """
@@ -238,10 +229,6 @@ class Person:
         # Update the current state of the person
         self._state.position = np.array([pos[0], pos[1], pos[2]])
         self._state.orientation = np.array([rot.x, rot.y, rot.z, rot.w])
-
-        # Signal the controller the updated state
-        if self._controller:
-            self._controller.update_state(self._state)
 
     def spawn_agent(self, usd_file, stage_name, init_pos, init_yaw):
 
@@ -368,8 +355,8 @@ class Person:
 
         carb.log_error("Unable to file a .usd file in {} character folder".format(
             character_folder_path))
-
-    def get_position(self):
+    @property
+    def position(self):
         """Returns the current position of the person in the world.
 
         Returns:
@@ -377,7 +364,8 @@ class Person:
         """
         return self._state.position
 
-    def get_target_position(self):
+    @property
+    def target_position(self):
         """Returns the current target position of the person in the world.
 
         Returns:

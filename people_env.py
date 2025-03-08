@@ -1,7 +1,7 @@
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
-
+from dataclasses import dataclass
 import omnigibson as og
 from omnigibson.macros import gm
 from typing import List
@@ -22,28 +22,6 @@ cfg["scene"] = {
     "floor_plane_visible": True,
 }
 
-cfg["objects"] = [
-    {
-        "type": "USDObject",
-        "name": "ghost_stain",
-        "usd_path": f"{gm.ASSET_PATH}/models/stain/stain.usd",
-        "category": "stain",
-        "visual_only": True,
-        "scale": [1.0, 1.0, 1.0],
-        "position": [1.0, 2.0, 0.001],
-        "orientation": [0, 0, 0, 1.0],
-    },
-]
-
-cfg["robots"] = [
-    {
-        "type": "Fetch",
-        "name": "skynet_robot",
-        "obs_modalities": ["rgb", "depth"],
-        "default_arm_pose": "diagonal30",
-        "default_reset_mode": "tuck",
-    },
-]
 env = og.Environment(cfg)
 
 from omnigibson.people import Person
@@ -73,6 +51,61 @@ PERSON_MODELS = [
     "original_male_adult_police_04"
 ]
 
+@dataclass
+class PersonAction:
+    target_position: np.ndarray = None
+    speed: float = None
+    velocity: np.ndarray = None
+
+    def __post_init__(self):
+        """
+        验证 target_position 和 velocity 不能同时有值
+        """
+        if (self.target_position is not None) and (self.velocity is not None):
+            raise ValueError("target_position and velocity cannot be both set in PersonAction")
+
+def orca_policy(person:Person, neighbors:List[Person], time_horizon=5.0):
+    """
+    ORCA Policy
+    """
+    return PersonAction(...)
+
+def default_policy(person:Person, neighbors:List[Person], time_horizon=5.0)->PersonAction: 
+    return PersonAction(target_position=person.target_position)
+
+class PeoplePolicy:
+    def __init__(self, person: Person,policy_type="default"):
+        self.person = person
+        self.radius = 0.3     # 行人半径
+        self.neighbors = []   # 邻近的其他行人
+        if policy_type == "orca":
+            self.generate_action = orca_policy
+        # default policy
+        elif policy_type == "default":
+            self.generate_action = default_policy
+        else:
+            raise ValueError(f"Invalid policy type: {policy_type}")
+
+    def set_neighbors(self, neighbors: List[Person]):
+        """设置邻近的其他行人"""
+        self.neighbors = [n for n in neighbors if n != self.person]
+
+    def update(self, dt: float):
+        """更新行人状态"""
+        # 计算新的速度
+        action = self.generate_action(self.person,self.neighbors)
+        self.implement_action(action,dt)
+
+
+    def implement_action(self, action:PersonAction,dt:float):
+        if action.target_position is not None:
+            self.person.temp_target_position = action.target_position
+        if action.velocity is not None:
+            self.person.temp_target_position = self.person.position + action.velocity * dt
+        if action.speed is not None:
+            self.person._target_speed = action.speed
+    
+class PeopleEnv(gym.Env):
 
 def orca_velocity(person:Person, neighbors:List[Person], time_horizon=5.0):
     """
@@ -211,7 +244,7 @@ class OmnigibsonPedestrianEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, num_persons=5, area_size=(10, 10)):
-        super(OmnigibsonPedestrianEnv, self).__init__()
+        super(PeopleEnv, self).__init__()
         self._world = World()
         
         self.num_persons = num_persons
@@ -225,38 +258,55 @@ class OmnigibsonPedestrianEnv(gym.Env):
             dtype=np.float32
         )
         
-        # 清空 PeopleManager 内部存储的行人
         self.people: List[Person] = []
+        self.policies: List[PeoplePolicy] = []  # 存储每个行人的策略
         self._init_people()
-
-    def _init_people(self):
-        """
-        初始化行人：随机生成行人的初始位置与目标，
-        """
-        for i in range(self.num_persons):
-            # 随机生成三维初始位置（假设 z 均为 0）
-            init_pos = np.random.uniform(0, self.area_size[0], size=3)
-            init_pos[2] = 0.0
-            target_pos = np.random.uniform(0, self.area_size[0], size=3)
-            target_pos[2] = 0.0
-            
-            name = f"person_{i}"
-            model_name = np.random.choice(PERSON_MODELS)
-            print(f"Creating person {name} with model {model_name}")
-            init_yaw = np.random.uniform(-np.pi, np.pi)
-            # 创建 Person 对象，注意构造函数参数需与 omnigibson 的定义一致
-            person = Person(name, model_name, init_pos=init_pos.tolist(), init_yaw=init_yaw)
-
-            person.update_target_position(target_pos.tolist())
-            # 添加到 PeopleManager 中
-            self.people.append(person)
-        # p2 = Person("person2", "original_male_adult_construction_05", init_pos=[
-        #         3.0, 0.0, 0.0], init_yaw=1.0)
-        # self.people.append(p1)
-
+        # 添加物理回调
         self._world.add_physics_callback(
             "people_step", self.step)
         
+    def _init_people(self):
+        # """
+        # 初始化行人：随机生成行人的初始位置与目标，
+        # """
+        # for i in range(self.num_persons):
+        #     # 随机生成三维初始位置（假设 z 均为 0）
+        #     init_pos = np.random.uniform(0, self.area_size[0], size=3)
+        #     init_pos[2] = 0.0
+        #     target_pos = np.random.uniform(0, self.area_size[0], size=3)
+        #     target_pos[2] = 0.0
+            
+        #     name = f"person_{i}"
+        #     model_name = np.random.choice(PERSON_MODELS)
+        #     # print(f"Creating person {name} with model {model_name}")
+        #     init_yaw = np.random.uniform(-np.pi, np.pi)
+        #     # 创建 Person 对象，注意构造函数参数需与 omnigibson 的定义一致
+        #     person = Person(name, model_name, init_pos=init_pos.tolist(), init_yaw=init_yaw)
+
+        #     person.update_target_position(target_pos.tolist())
+        #     # 创建并存储策略控制器
+        #     policy = PeoplePolicy(person,policy_type="default")
+        #     # 添加到 PeopleManager 中
+        #     self.people.append(person)
+        #     self.policies.append(policy)
+
+        # 2 persons test case
+        p1 = self.spawn_person("person1","original_male_adult_construction_05",[0,0,0],0)
+        p2 = self.spawn_person("person2","original_male_adult_construction_05",[10,0,0],0)
+        p3 = self.spawn_person("person3","original_male_adult_construction_05",[0,10,0],0)
+        p4 = self.spawn_person("person4","original_male_adult_construction_05",[10,10,0],0)
+        p1.update_target_position([10,10,0])
+        p2.update_target_position([0,10,0])
+        p3.update_target_position([10,0,0])
+        p4.update_target_position([0,0,0])
+
+
+    def spawn_person(self,name,model_name,init_pos,init_yaw,policy_type="default"):
+        person = Person(name, model_name, init_pos=init_pos, init_yaw=init_yaw)
+        self.people.append(person)
+        self.policies.append(PeoplePolicy(person,policy_type="default"))
+        return person
+    
     def reset(self):
         self.people = []
         self._init_people()
@@ -269,8 +319,8 @@ class OmnigibsonPedestrianEnv(gym.Env):
         """
         obs = np.zeros((self.num_persons, 4), dtype=np.float32)
         for i, person in enumerate(self.people):
-            pos = np.array(person.get_position())[:2]
-            target = np.array(person.get_target_position())[:2]
+            pos = person.position[:2]
+            target = person.temp_target_position[:2]
             obs[i] = np.concatenate([pos, target])
         return obs
 
@@ -278,40 +328,19 @@ class OmnigibsonPedestrianEnv(gym.Env):
         """
         1. 如果行人附加了控制器，先调用其 update(dt) 方法更新目标；
         2. 对每个行人计算 ORCA 修正后的运动速度，并更新位置；
-        3. 根据所有行人距离目标的和构造奖励，若所有行人距离目标小于一定阈值，则结束 episode。
         """
-        velocities = []
-        for person in self.people:
-            neighbors = [other for other in self.people if other != person]
-            v = orca_velocity(person, neighbors)
-            velocities.append(v)
-        print("velocities:", velocities)
-        # 通过v和dt计算行人目标位置
-        for person, v in zip(self.people, velocities):
-            pos = person.get_position()
-            new_pos = pos + v * dt
-            person.update_target_position(new_pos)
+        # 更新每个行人的邻居信息
+        for policy in self.policies:
+            policy.set_neighbors(self.people)
+            policy.update(dt)
 
-        # 计算 reward（所有行人到目标距离之和的负值）以及判断是否结束
-        total_distance = 0.0
-        done = True
-        for person in self.people:
-            pos = np.array(person.get_position())[:2]
-            target = np.array(person.get_target_position())[:2]
-            dist = np.linalg.norm(pos - target)
-            total_distance += dist
-            if dist >= 0.5:
-                done = False
-        reward = -total_distance
-        
+        done = False
         obs = self._get_obs()
+        reward = 0
         info = {}
         return obs, reward, done, info
 
-people_sim_env = OmnigibsonPedestrianEnv(num_persons=2, area_size=(10, 10))
-    
-# p1 = Person("person1", "original_male_adult_construction_05", init_pos=[
-#                 3.0, 0.0, 0.0], init_yaw=1.0)
+people_sim_env = PeopleEnv(num_persons=2, area_size=(100, 100))
 
 og.sim.enable_viewer_camera_teleoperation()
 
