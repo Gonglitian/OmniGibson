@@ -8,7 +8,7 @@ from typing import List
 gm.HEADLESS = True
 gm.REMOTE_STREAMING = "native"
 
-import rvo2
+import rvo2 #TODO: need to install python-rvo2 on your local machine
 
 cfg = dict()
 
@@ -69,6 +69,92 @@ def orca_policy(person:Person, neighbors:List[Person], time_horizon=5.0):
     ORCA Policy
     """
     return PersonAction(...)
+
+def rvo2_velocity(person:Person, neighbors:List[Person], time_horizon=5.0):
+    """
+    使用RVO2库实现与simple_orca_velocity相同的避障功能：
+    1. 根据当前位置和目标位置计算期望速度
+    2. 使用RVO2处理与邻居的避障
+    3. 确保速度在最大速度范围内
+    
+    参数与返回值与simple_orca_velocity保持一致
+
+    # 参数说明:
+    # timeStep:        float, 仿真的时间步长
+    # neighborDist:    float, 考虑避障的邻居搜索范围（距离阈值）
+    # maxNeighbors:    size_t, 在避障计算中考虑的最大邻居数量
+    # timeHorizon:     float, 与其他代理（人）避障的时间范围
+    # timeHorizonObst: float, 与静态障碍物避障的时间范围
+    # radius:          float, 代理（人）的半径
+    # maxSpeed:        float, 代理（人）的最大移动速度
+    # velocity:        tuple, 初始速度，默认为(0, 0)表示静止状态
+    """
+    import rvo2
+
+    radius = getattr(person, 'radius', 0.3)
+    max_speed = getattr(person, 'max_speed', 1.0)
+    
+    # 创建RVO2模拟器实例
+    sim = rvo2.PyRVOSimulator(
+        0.1,     # 仿真时间步长
+        1.5,       # 邻居搜索范围（与原函数中的1.5倍半径对应）
+        10,        # 最大邻居数量
+        time_horizon,   # 与其他代理避障的时间范围
+        time_horizon,  # 与障碍物避障的时间范围
+        radius,  # 代理半径
+        max_speed  # 最大速度
+    )
+    
+    # 获取当前位置和目标位置
+    pos = np.array(person.get_position())
+    target = np.array(person.get_target_position())
+    pos_2d = pos[:2]
+    target_2d = target[:2]
+    
+    # 添加主要行人
+    agent_no = sim.addAgent(
+        (pos_2d[0], pos_2d[1]), # 位置
+        1.5, # 邻居搜索范围
+        10, # 最大邻居数量
+        time_horizon, # 与其他代理避障的时间范围
+        time_horizon, # 与障碍物避障的时间范围
+        radius, # 代理半径
+        max_speed, # 最大速度
+        (0, 0) # 初始速度
+    )
+    
+    # 添加所有邻居行人
+    for neighbor in neighbors:
+        neighbor_pos = np.array(neighbor.get_position())[:2]
+        sim.addAgent(
+            (neighbor_pos[0], neighbor_pos[1]), # 位置
+            1.5, # 邻居搜索范围
+            10, # 最大邻居数量
+            time_horizon, # 与其他代理避障的时间范围
+            time_horizon, # 与障碍物避障的时间范围
+            radius, # 代理半径
+            max_speed, # 最大速度
+            (0, 0) # 初始速度
+        )
+    
+    # 计算期望速度
+    direction = target_2d - pos_2d
+    dist_to_goal = np.linalg.norm(direction)
+    if dist_to_goal < 1e-5:
+        pref_velocity = (0, 0)
+    else:
+        pref_velocity = tuple(direction / dist_to_goal * max_speed)
+    
+    # 设置期望速度并进行一步模拟
+    sim.setAgentPrefVelocity(agent_no, pref_velocity)
+    sim.doStep()
+    
+    # 获取计算得到的新速度
+    new_velocity = sim.getAgentVelocity(agent_no)
+    
+    # 返回三维速度（z轴速度为0）
+    return np.array([new_velocity[0], new_velocity[1], 0.0])
+
 
 def default_policy(person:Person, neighbors:List[Person], time_horizon=5.0)->PersonAction: 
     return PersonAction(target_position=person.target_position)
