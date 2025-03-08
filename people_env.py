@@ -64,13 +64,8 @@ class PersonAction:
         if (self.target_position is not None) and (self.velocity is not None):
             raise ValueError("target_position and velocity cannot be both set in PersonAction")
 
-def orca_policy(person:Person, neighbors:List[Person], time_horizon=5.0):
-    """
-    ORCA Policy
-    """
-    return PersonAction(...)
 
-def rvo2_velocity(person:Person, neighbors:List[Person], time_horizon=5.0):
+def orca_policy(person:Person, neighbors:List[Person], time_horizon=5.0):
     """
     使用RVO2库实现与simple_orca_velocity相同的避障功能：
     1. 根据当前位置和目标位置计算期望速度
@@ -89,7 +84,6 @@ def rvo2_velocity(person:Person, neighbors:List[Person], time_horizon=5.0):
     # maxSpeed:        float, 代理（人）的最大移动速度
     # velocity:        tuple, 初始速度，默认为(0, 0)表示静止状态
     """
-    import rvo2
 
     radius = getattr(person, 'radius', 0.3)
     max_speed = getattr(person, 'max_speed', 1.0)
@@ -152,8 +146,7 @@ def rvo2_velocity(person:Person, neighbors:List[Person], time_horizon=5.0):
     # 获取计算得到的新速度
     new_velocity = sim.getAgentVelocity(agent_no)
     
-    # 返回三维速度（z轴速度为0）
-    return np.array([new_velocity[0], new_velocity[1], 0.0])
+    return PersonAction(velocity=new_velocity)
 
 
 def default_policy(person:Person, neighbors:List[Person], time_horizon=5.0)->PersonAction: 
