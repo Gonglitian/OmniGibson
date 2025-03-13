@@ -26,6 +26,7 @@ env = og.Environment(cfg)
 
 from omnigibson.people import Person
 from omni.isaac.core.world import World
+from PeoplePolicy import PeoplePolicy, PersonAction,DefaultPolicy,ORCAPolicy
 
 PERSON_MODELS = [
     "F_Business_02",
@@ -50,20 +51,6 @@ PERSON_MODELS = [
     "original_male_adult_medical_01",
     "original_male_adult_police_04"
 ]
-
-@dataclass
-class PersonAction:
-    target_position: np.ndarray = None
-    speed: float = None
-    velocity: np.ndarray = None
-
-    def __post_init__(self):
-        """
-        验证 target_position 和 velocity 不能同时有值
-        """
-        if (self.target_position is not None) and (self.velocity is not None):
-            raise ValueError("target_position and velocity cannot be both set in PersonAction")
-
 
 def orca_policy(person:Person, neighbors:List[Person], time_horizon=5.0):
     """
@@ -151,41 +138,7 @@ def orca_policy(person:Person, neighbors:List[Person], time_horizon=5.0):
 
 def default_policy(person:Person, neighbors:List[Person], time_horizon=5.0)->PersonAction: 
     return PersonAction(target_position=person.target_position)
-
-class PeoplePolicy:
-    def __init__(self, person: Person,policy_type="default"):
-        self.person = person
-        self.radius = 0.3     # 行人半径
-        self.neighbors = []   # 邻近的其他行人
-        if policy_type == "orca":
-            self.generate_action = orca_policy
-        # default policy
-        elif policy_type == "default":
-            self.generate_action = default_policy
-        else:
-            raise ValueError(f"Invalid policy type: {policy_type}")
-
-    def set_neighbors(self, neighbors: List[Person]):
-        """设置邻近的其他行人"""
-        self.neighbors = [n for n in neighbors if n != self.person]
-
-    def update(self, dt: float):
-        """更新行人状态"""
-        # 计算新的速度
-        action = self.generate_action(self.person,self.neighbors)
-        self.implement_action(action,dt)
-
-
-    def implement_action(self, action:PersonAction,dt:float):
-        if action.target_position is not None:
-            self.person.temp_target_position = action.target_position
-        if action.velocity is not None:
-            self.person.temp_target_position = self.person.position + action.velocity * dt
-        if action.speed is not None:
-            self.person._target_speed = action.speed
     
-class PeopleEnv(gym.Env):
-
 def orca_velocity(person:Person, neighbors:List[Person], time_horizon=5.0):
     """
     简化版 ORCA 算法：
@@ -311,8 +264,7 @@ def rvo2_velocity(person:Person, neighbors:List[Person], time_horizon=5.0):
     return np.array([new_velocity[0], new_velocity[1], 0.0])
 
 
-
-class OmnigibsonPedestrianEnv(gym.Env):
+class PeopleEnv(gym.Env):
     """
     基于 omnigibson.people 接口的行人环境：
       - 在 reset 时随机生成一定数量的行人，并为部分行人附加随机目标控制器；
@@ -338,64 +290,63 @@ class OmnigibsonPedestrianEnv(gym.Env):
         )
         
         self.people: List[Person] = []
-        self.policies: List[PeoplePolicy] = []  # 存储每个行人的策略
+        self.orca_sim_agents:List[int] = []
         self._init_people()
         # 添加物理回调
         self._world.add_physics_callback(
             "people_step", self.step)
         
     def _init_people(self):
-        # """
-        # 初始化行人：随机生成行人的初始位置与目标，
-        # """
-        # for i in range(self.num_persons):
-        #     # 随机生成三维初始位置（假设 z 均为 0）
-        #     init_pos = np.random.uniform(0, self.area_size[0], size=3)
-        #     init_pos[2] = 0.0
-        #     target_pos = np.random.uniform(0, self.area_size[0], size=3)
-        #     target_pos[2] = 0.0
-            
-        #     name = f"person_{i}"
-        #     model_name = np.random.choice(PERSON_MODELS)
-        #     # print(f"Creating person {name} with model {model_name}")
-        #     init_yaw = np.random.uniform(-np.pi, np.pi)
-        #     # 创建 Person 对象，注意构造函数参数需与 omnigibson 的定义一致
-        #     person = Person(name, model_name, init_pos=init_pos.tolist(), init_yaw=init_yaw)
-
-        #     person.update_target_position(target_pos.tolist())
-        #     # 创建并存储策略控制器
-        #     policy = PeoplePolicy(person,policy_type="default")
-        #     # 添加到 PeopleManager 中
-        #     self.people.append(person)
-        #     self.policies.append(policy)
-
-        # 2 persons test case
-        p1 = self.spawn_person("person1","original_male_adult_construction_05",[0,0,0],0)
-        p2 = self.spawn_person("person2","original_male_adult_construction_05",[10,0,0],0)
-        p3 = self.spawn_person("person3","original_male_adult_construction_05",[0,10,0],0)
-        p4 = self.spawn_person("person4","original_male_adult_construction_05",[10,10,0],0)
+        # Note test case
+        p1 = self.spawn_person(name="person1",init_pos=[0,0,0],init_yaw=0)
+        p2 = self.spawn_person(name="person2",init_pos=[10,0,0],init_yaw=0)
+        p3 = self.spawn_person(name="person3",init_pos=[0,10,0],init_yaw=0)
+        p4 = self.spawn_person(name="person4",init_pos=[10,10,0],init_yaw=0)
         p1.update_target_position([10,10,0])
         p2.update_target_position([0,10,0])
         p3.update_target_position([10,0,0])
         p4.update_target_position([0,0,0])
 
 
-    def spawn_person(self,name,model_name,init_pos,init_yaw,policy_type="default"):
+    def spawn_person(self,name,model_name=np.random.choice(PERSON_MODELS),init_pos=[0,0,0],init_yaw=0,policy="default",policy_cfg=None):
         person = Person(name, model_name, init_pos=init_pos, init_yaw=init_yaw)
+        person.env = self
+        if policy == "default":
+            person.policy = DefaultPolicy(policy_cfg)
+        elif policy == "orca":
+            # check if sim = rvo2.PyRVOSimulator is initialized, if not initialize it
+            if not hasattr(self, 'sim'):
+                """             
+                param of rvo2.PyRVOSimulator:
+                float 	timeStep,
+                float 	neighborDist,
+                size_t 	maxNeighbors,
+                float 	timeHorizon,
+                float 	timeHorizonObst,
+                float 	radius,
+                float 	maxSpeed,
+                """
+                # TODO: 需要从omnigibson.people.Person中获取参数
+                self.orca_sim = rvo2.PyRVOSimulator(1/60., 1.5, 5, 1.5, 2, 0.4, 1)
+            person.policy = ORCAPolicy(policy_cfg)
+            # add agent to sim
+            # TODO: 需要从omnigibson.people.Person中获取参数
+            agent:int = self.orca_sim.addAgent(init_pos[:2], 1.5, 5, 1.5, 2, 0.4, 1, (0, 0))
+            # store agent instance to env
+            self.orca_sim_agents.append(agent)
+        else:
+            raise ValueError(f"Invalid policy type: {policy}")
+        
         self.people.append(person)
-        self.policies.append(PeoplePolicy(person,policy_type="default"))
         return person
     
     def reset(self):
+        # Todo 完善reset函数
         self.people = []
         self._init_people()
         return self._get_obs()
 
     def _get_obs(self):
-        """
-        返回所有行人的观测信息，每个行人包含 [x, y, target_x, target_y]，
-        这里只取二维信息，假设 z 分量均为 0。
-        """
         obs = np.zeros((self.num_persons, 4), dtype=np.float32)
         for i, person in enumerate(self.people):
             pos = person.position[:2]
@@ -404,17 +355,11 @@ class OmnigibsonPedestrianEnv(gym.Env):
         return obs
 
     def step(self, dt):
-        """
-        1. 如果行人附加了控制器，先调用其 update(dt) 方法更新目标；
-        2. 对每个行人计算 ORCA 修正后的运动速度，并更新位置；
-        """
-        # 更新每个行人的邻居信息
-        for policy in self.policies:
-            policy.set_neighbors(self.people)
-            policy.update(dt)
+        for person in self.people:
+            person.policy.step(dt)
 
         done = False
-        obs = self._get_obs()
+        obs = None
         reward = 0
         info = {}
         return obs, reward, done, info
