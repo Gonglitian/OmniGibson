@@ -82,7 +82,7 @@ class Person:
         character_name: str = None,
         init_pos=[0.0, 0.0, 0.0],
         init_yaw=0.0,
-        stop_radius=0.1,
+        stop_radius=0.05,
     ):
         """Initializes the person object
 
@@ -107,7 +107,8 @@ class Person:
         self.update_target_position(init_pos)
         self._target_speed = 1.0
         # Temp target position
-        self.temp_target_position = np.array(init_pos)
+        # temp target position should be change somewhere else to move the person
+        self.temp_target_position = self._target_position
         # Save the name with which the vehicle will appear in the stage
         # and the character model that will be loaded into the simulator
         self._stage_prefix = get_stage_next_free_path(
@@ -187,11 +188,11 @@ class Person:
         distance_to_target_position = np.linalg.norm(
             self._target_position - self._state.position)
 
-        # If we are still far away from the target position, keep moving towards it
+        # If we are still far away from the target position, keep moving towards to temp target position
         if distance_to_target_position > self.stop_radius:
             self.character_graph.set_variable("Action", "Walk")
             self.character_graph.set_variable("PathPoints", [carb.Float3(
-                self._state.position), carb.Float3(self._target_position)])
+                    self._state.position), carb.Float3(self.temp_target_position)])
             self.character_graph.set_variable("Walk", self._target_speed)
         else:
             # If we are close to the target position, stop moving

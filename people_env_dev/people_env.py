@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import omnigibson as og
 from omnigibson.macros import gm
 from typing import List
+from matplotlib import pyplot as plt
 gm.HEADLESS = True
 gm.REMOTE_STREAMING = "native"
 
@@ -22,11 +23,11 @@ cfg["scene"] = {
     "floor_plane_visible": True,
 }
 
-env = og.Environment(cfg)
+og_env = og.Environment(cfg)
 
 from omnigibson.people import Person
 from omni.isaac.core.world import World
-from PeoplePolicy import PeoplePolicy, PersonAction,DefaultPolicy,ORCAPolicy
+from PeoplePolicy import DefaultPolicy,ORCAPolicy
 
 PERSON_MODELS = [
     "F_Business_02",
@@ -52,301 +53,172 @@ PERSON_MODELS = [
     "original_male_adult_police_04"
 ]
 
-def orca_policy(person:Person, neighbors:List[Person], time_horizon=5.0):
-    """
-    使用RVO2库实现与simple_orca_velocity相同的避障功能：
-    1. 根据当前位置和目标位置计算期望速度
-    2. 使用RVO2处理与邻居的避障
-    3. 确保速度在最大速度范围内
-    
-    参数与返回值与simple_orca_velocity保持一致
-
-    # 参数说明:
-    # timeStep:        float, 仿真的时间步长
-    # neighborDist:    float, 考虑避障的邻居搜索范围（距离阈值）
-    # maxNeighbors:    size_t, 在避障计算中考虑的最大邻居数量
-    # timeHorizon:     float, 与其他代理（人）避障的时间范围
-    # timeHorizonObst: float, 与静态障碍物避障的时间范围
-    # radius:          float, 代理（人）的半径
-    # maxSpeed:        float, 代理（人）的最大移动速度
-    # velocity:        tuple, 初始速度，默认为(0, 0)表示静止状态
-    """
-
-    radius = getattr(person, 'radius', 0.3)
-    max_speed = getattr(person, 'max_speed', 1.0)
-    
-    # 创建RVO2模拟器实例
-    sim = rvo2.PyRVOSimulator(
-        0.1,     # 仿真时间步长
-        1.5,       # 邻居搜索范围（与原函数中的1.5倍半径对应）
-        10,        # 最大邻居数量
-        time_horizon,   # 与其他代理避障的时间范围
-        time_horizon,  # 与障碍物避障的时间范围
-        radius,  # 代理半径
-        max_speed  # 最大速度
-    )
-    
-    # 获取当前位置和目标位置
-    pos = np.array(person.get_position())
-    target = np.array(person.get_target_position())
-    pos_2d = pos[:2]
-    target_2d = target[:2]
-    
-    # 添加主要行人
-    agent_no = sim.addAgent(
-        (pos_2d[0], pos_2d[1]), # 位置
-        1.5, # 邻居搜索范围
-        10, # 最大邻居数量
-        time_horizon, # 与其他代理避障的时间范围
-        time_horizon, # 与障碍物避障的时间范围
-        radius, # 代理半径
-        max_speed, # 最大速度
-        (0, 0) # 初始速度
-    )
-    
-    # 添加所有邻居行人
-    for neighbor in neighbors:
-        neighbor_pos = np.array(neighbor.get_position())[:2]
-        sim.addAgent(
-            (neighbor_pos[0], neighbor_pos[1]), # 位置
-            1.5, # 邻居搜索范围
-            10, # 最大邻居数量
-            time_horizon, # 与其他代理避障的时间范围
-            time_horizon, # 与障碍物避障的时间范围
-            radius, # 代理半径
-            max_speed, # 最大速度
-            (0, 0) # 初始速度
-        )
-    
-    # 计算期望速度
-    direction = target_2d - pos_2d
-    dist_to_goal = np.linalg.norm(direction)
-    if dist_to_goal < 1e-5:
-        pref_velocity = (0, 0)
-    else:
-        pref_velocity = tuple(direction / dist_to_goal * max_speed)
-    
-    # 设置期望速度并进行一步模拟
-    sim.setAgentPrefVelocity(agent_no, pref_velocity)
-    sim.doStep()
-    
-    # 获取计算得到的新速度
-    new_velocity = sim.getAgentVelocity(agent_no)
-    
-    return PersonAction(velocity=new_velocity)
-
-
-def default_policy(person:Person, neighbors:List[Person], time_horizon=5.0)->PersonAction: 
-    return PersonAction(target_position=person.target_position)
-    
-def orca_velocity(person:Person, neighbors:List[Person], time_horizon=5.0):
-    """
-    简化版 ORCA 算法：
-      1. 根据当前位置和目标位置计算期望速度； 
-      2. 对于靠得较近的邻居增加一个排斥项，避免碰撞；
-      3. 将合成速度裁剪到行人的最大速度范围内。
-    假设 Person 对象提供 get_position() 与 get_target_position() 方法，
-    同时包含属性 max_speed（默认 0.1）和 radius（默认 0.3）。
-    """
-    pos = np.array(person.get_position())    # [x, y, z]
-    target = np.array(person.get_target_position())  # [x, y, z]
-    pos_2d = pos[:2]
-    target_2d = target[:2]
-    
-    direction = target_2d - pos_2d
-    norm = np.linalg.norm(direction)
-    max_speed = getattr(person, 'max_speed', 1)
-    if norm < 1e-5:
-        v_pref = np.zeros(2)
-    else:
-        v_pref = direction / norm * max_speed
-    
-    avoidance = np.zeros(2)
-    for other in neighbors:
-        other_pos = np.array(other.get_position())[:2]
-        diff = pos_2d - other_pos
-        dist = np.linalg.norm(diff)
-        radius = getattr(person, 'radius', 0.3)
-        other_radius = getattr(other, 'radius', 0.3)
-        combined_radius = radius + other_radius
-        if dist < combined_radius * 1.5:
-            if dist > 1e-5:
-                avoidance += (diff / dist) * (combined_radius - dist)
-    new_velocity = v_pref + avoidance
-    speed = np.linalg.norm(new_velocity)
-    if speed > max_speed:
-        new_velocity = new_velocity / speed * max_speed
-    return np.array([new_velocity[0],new_velocity[1],0.0])  # 返回二维速度，假设 z 分量为 0
-
-def rvo2_velocity(person:Person, neighbors:List[Person], time_horizon=5.0):
-    """
-    使用RVO2库实现与simple_orca_velocity相同的避障功能：
-    1. 根据当前位置和目标位置计算期望速度
-    2. 使用RVO2处理与邻居的避障
-    3. 确保速度在最大速度范围内
-    
-    参数与返回值与simple_orca_velocity保持一致
-
-    # 参数说明:
-    # timeStep:        float, 仿真的时间步长
-    # neighborDist:    float, 考虑避障的邻居搜索范围（距离阈值）
-    # maxNeighbors:    size_t, 在避障计算中考虑的最大邻居数量
-    # timeHorizon:     float, 与其他代理（人）避障的时间范围
-    # timeHorizonObst: float, 与静态障碍物避障的时间范围
-    # radius:          float, 代理（人）的半径
-    # maxSpeed:        float, 代理（人）的最大移动速度
-    # velocity:        tuple, 初始速度，默认为(0, 0)表示静止状态
-    """
-    import rvo2
-
-    radius = getattr(person, 'radius', 0.3)
-    max_speed = getattr(person, 'max_speed', 1.0)
-    
-    # 创建RVO2模拟器实例
-    sim = rvo2.PyRVOSimulator(
-        0.1,     # 仿真时间步长
-        1.5,       # 邻居搜索范围（与原函数中的1.5倍半径对应）
-        10,        # 最大邻居数量
-        time_horizon,   # 与其他代理避障的时间范围
-        time_horizon,  # 与障碍物避障的时间范围
-        radius,  # 代理半径
-        max_speed  # 最大速度
-    )
-    
-    # 获取当前位置和目标位置
-    pos = np.array(person.get_position())
-    target = np.array(person.get_target_position())
-    pos_2d = pos[:2]
-    target_2d = target[:2]
-    
-    # 添加主要行人
-    agent_no = sim.addAgent(
-        (pos_2d[0], pos_2d[1]), # 位置
-        1.5, # 邻居搜索范围
-        10, # 最大邻居数量
-        time_horizon, # 与其他代理避障的时间范围
-        time_horizon, # 与障碍物避障的时间范围
-        radius, # 代理半径
-        max_speed, # 最大速度
-        (0, 0) # 初始速度
-    )
-    
-    # 添加所有邻居行人
-    for neighbor in neighbors:
-        neighbor_pos = np.array(neighbor.get_position())[:2]
-        sim.addAgent(
-            (neighbor_pos[0], neighbor_pos[1]), # 位置
-            1.5, # 邻居搜索范围
-            10, # 最大邻居数量
-            time_horizon, # 与其他代理避障的时间范围
-            time_horizon, # 与障碍物避障的时间范围
-            radius, # 代理半径
-            max_speed, # 最大速度
-            (0, 0) # 初始速度
-        )
-    
-    # 计算期望速度
-    direction = target_2d - pos_2d
-    dist_to_goal = np.linalg.norm(direction)
-    if dist_to_goal < 1e-5:
-        pref_velocity = (0, 0)
-    else:
-        pref_velocity = tuple(direction / dist_to_goal * max_speed)
-    
-    # 设置期望速度并进行一步模拟
-    sim.setAgentPrefVelocity(agent_no, pref_velocity)
-    sim.doStep()
-    
-    # 获取计算得到的新速度
-    new_velocity = sim.getAgentVelocity(agent_no)
-    
-    # 返回三维速度（z轴速度为0）
-    return np.array([new_velocity[0], new_velocity[1], 0.0])
-
-
 class PeopleEnv(gym.Env):
     """
-    基于 omnigibson.people 接口的行人环境：
-      - 在 reset 时随机生成一定数量的行人，并为部分行人附加随机目标控制器；
-      - 每个 step 中，先更新控制器，再利用简化 ORCA 算法计算行人的运动；
-      - 观察值为每个行人的二维位置及目标；
-      - 奖励设计为负的所有行人当前到目标距离之和，当所有行人均到达目标时结束。
+    A Gym environment for simulating multiple pedestrians in a 2D space.
+    
+    This environment uses RVO2 (Reciprocal Velocity Obstacles) for local collision avoidance
+    and supports different movement policies for pedestrians.
+    
+    Attributes:
+        metadata (dict): Gym environment metadata
+        _world (World): The simulation world instance
+        n_physics_timesteps_per_render (int): Number of physics steps per rendering step
+        step_count (int): Counter for simulation steps
+        num_persons (int): Number of pedestrians in the environment
+        area_size (tuple): Size of the simulation area (width, height)
+        observation_space (spaces.Box): Gym observation space for the environment
+        people (List[Person]): List of Person objects in the environment
+        orca_sim_agents (List[int]): List of agent IDs in the RVO2 simulator
     """
+
     metadata = {'render.modes': ['human']}
 
     def __init__(self, num_persons=5, area_size=(10, 10)):
-        super(PeopleEnv, self).__init__()
-        self._world = World()
+        """
+        Initialize the PeopleEnv environment.
         
+        Args:
+            num_persons (int): Number of pedestrians to create
+            area_size (tuple): Size of the simulation area (width, height)
+            n_physics_timesteps_per_render (int): Number of physics steps per rendering step
+        """
+        super(PeopleEnv, self).__init__()
+
+        # sim frequency related
+        self.sim_dt = og.sim._sim_step_dt
+        self.sim_freq = int(1.0 / self.sim_dt)
+        self.n_physics_timesteps_per_render = og.sim.n_physics_timesteps_per_render
+        print(f"sim_dt: {self.sim_dt}, sim_freq: {self.sim_freq}, n_physics_timesteps_per_render: {self.n_physics_timesteps_per_render}")
+        self.step_count = 0
+        
+        # environment related
         self.num_persons = num_persons
         self.area_size = area_size
-        
-        # 观察空间：每个行人提供 [x, y, target_x, target_y]
-        self.observation_space = spaces.Box(
-            low=0,
-            high=max(area_size),
-            shape=(self.num_persons, 4),
-            dtype=np.float32
-        )
-        
         self.people: List[Person] = []
+        # orca sim related
         self.orca_sim_agents:List[int] = []
-        self._init_people()
-        # 添加物理回调
+        self.orca_sim_hyper_params = {
+            "timeStep": self.sim_dt,
+            "neighborDist": 1.5,
+            "maxNeighbors": 5,
+            "timeHorizon": 1.5,
+            "timeHorizonObst": 2,
+            "radius": 0.5,
+            "maxSpeed": 1.0,
+        }
+        """ 
+        param of agent:\n
+        const Vector2 & 	position,\n
+        float 	neighborDist,\n
+        size_t 	maxNeighbors,\n
+        float 	timeHorizon,\n
+        float 	timeHorizonObst,\n
+        float 	radius,\n
+        float 	maxSpeed,\n
+        const Vector2 & 	velocity = Vector2()
+        """ 
+        self.orca_agent_hyper_params = {
+            "neighborDist": 1.5,
+            "maxNeighbors": 5,
+            "timeHorizon": 1.5,
+            "timeHorizonObst": 2,
+            "radius": 0.5,
+            "maxSpeed": 1.0,
+        }
+        self._load_people()
+        
+        # Add physics callback
+        self._world = World()
         self._world.add_physics_callback(
             "people_step", self.step)
         
-    def _init_people(self):
+        # visualize related
+        self.history_positions_x = []
+        self.history_positions_y = []
+    def _load_people(self):
+        """
+        Initialize test pedestrians with predefined positions and target positions.
+        Creates 4 pedestrians moving in a cross pattern.
+        """
         # Note test case
-        p1 = self.spawn_person(name="person1",init_pos=[0,0,0],init_yaw=0)
-        p2 = self.spawn_person(name="person2",init_pos=[10,0,0],init_yaw=0)
-        p3 = self.spawn_person(name="person3",init_pos=[0,10,0],init_yaw=0)
-        p4 = self.spawn_person(name="person4",init_pos=[10,10,0],init_yaw=0)
+        p1 = self.spawn_person(name="person1",init_pos=[-5,-5,0],init_yaw=0)
+        p2 = self.spawn_person(name="person2",init_pos=[5,-5,0],init_yaw=0)
+        p3 = self.spawn_person(name="person3",init_pos=[-5,5,0],init_yaw=0)
+        p4 = self.spawn_person(name="person4",init_pos=[5,5,0],init_yaw=0)
         p1.update_target_position([10,10,0])
-        p2.update_target_position([0,10,0])
-        p3.update_target_position([10,0,0])
-        p4.update_target_position([0,0,0])
+        p2.update_target_position([-10,10,0])
+        p3.update_target_position([10,-10,0])
+        p4.update_target_position([-10,-10,0])
 
 
-    def spawn_person(self,name,model_name=np.random.choice(PERSON_MODELS),init_pos=[0,0,0],init_yaw=0,policy="default",policy_cfg=None):
+    def spawn_person(self,name,model_name=None,init_pos=[0,0,0],init_yaw=0,policy="orca",policy_cfg=None):
+        """
+        Create and spawn a new person in the environment.
+        
+        Args:
+            name (str): Unique identifier for the person
+            model_name (str): Name of the 3D model to use for the person
+            init_pos (list): Initial position [x, y, z]
+            init_yaw (float): Initial yaw angle
+            policy (str): Movement policy type ("default" or "orca")
+            policy_cfg (dict): Configuration for the movement policy
+            
+        Returns:
+            Person: The created person object
+        """
+        if model_name is None:
+            model_name = np.random.choice(PERSON_MODELS)
         person = Person(name, model_name, init_pos=init_pos, init_yaw=init_yaw)
         person.env = self
         if policy == "default":
-            person.policy = DefaultPolicy(policy_cfg)
+            person.policy = DefaultPolicy(person,policy_cfg)
         elif policy == "orca":
-            # check if sim = rvo2.PyRVOSimulator is initialized, if not initialize it
-            if not hasattr(self, 'sim'):
-                """             
-                param of rvo2.PyRVOSimulator:
-                float 	timeStep,
-                float 	neighborDist,
-                size_t 	maxNeighbors,
-                float 	timeHorizon,
-                float 	timeHorizonObst,
-                float 	radius,
-                float 	maxSpeed,
-                """
-                # TODO: 需要从omnigibson.people.Person中获取参数
-                self.orca_sim = rvo2.PyRVOSimulator(1/60., 1.5, 5, 1.5, 2, 0.4, 1)
-            person.policy = ORCAPolicy(policy_cfg)
-            # add agent to sim
-            # TODO: 需要从omnigibson.people.Person中获取参数
-            agent:int = self.orca_sim.addAgent(init_pos[:2], 1.5, 5, 1.5, 2, 0.4, 1, (0, 0))
+            # check if orca_sim is initialized, if not initialize it
+            if not hasattr(self, 'orca_sim'):
+                # TODO: Get parameters from omnigibson.people.Person
+                sim_params = [v for k,v in self.orca_sim_hyper_params.items()]
+                self.orca_sim = rvo2.PyRVOSimulator(*sim_params)
+            # bind policy to person
+            person.policy = ORCAPolicy(person,policy_cfg)
+            
+            # Calculate initial velocity towards target
+            # TODO: maxSpeed should be from person
+            initial_velocity:tuple[float,float] = ORCAPolicy.calculate_pref_velocity(init_pos[:2], person._target_position[:2], self.orca_agent_hyper_params["maxSpeed"])
+            
+            # add agent to sim with initial velocity
+            agent_params = [v for k,v in self.orca_agent_hyper_params.items()]
+            agent:int = self.orca_sim.addAgent(tuple(init_pos[:2]), *agent_params, initial_velocity)
+            self.orca_sim.setAgentPrefVelocity(agent, initial_velocity)
             # store agent instance to env
-            self.orca_sim_agents.append(agent)
+            person.orca_idx = agent
+            person.sim = self.orca_sim
         else:
             raise ValueError(f"Invalid policy type: {policy}")
         
+        person.idx = len(self.people)
         self.people.append(person)
         return person
     
     def reset(self):
-        # Todo 完善reset函数
+        """
+        Reset the environment to its initial state.
+        
+        Returns:
+            np.ndarray: Initial observation
+        """
+        # Todo: Complete reset function
         self.people = []
-        self._init_people()
+        self._load_people()
         return self._get_obs()
 
     def _get_obs(self):
+        """
+        Get the current observation of the environment.
+        
+        Returns:
+            np.ndarray: Array containing positions and target positions of all persons
+        """
         obs = np.zeros((self.num_persons, 4), dtype=np.float32)
         for i, person in enumerate(self.people):
             pos = person.position[:2]
@@ -355,14 +227,52 @@ class PeopleEnv(gym.Env):
         return obs
 
     def step(self, dt):
-        for person in self.people:
-            person.policy.step(dt)
-
+        """
+        Step the environment forward in time.
+        
+        Args:
+            dt (float): Time step size
+            
+        Returns:
+            tuple: (observation, reward, done, info)
+        """
+        # step once when physics steps {{n_physics_timesteps_per_render}} times
+        self.step_count += 1
+        if self.step_count % self.n_physics_timesteps_per_render == 0:
+            # if some people use orca as policy, step the orca sim
+            if hasattr(self, 'orca_sim') and self.orca_sim is not None:
+                # orca_sim get all people's position and velocity
+                for person in self.people:
+                    if hasattr(person, 'orca_idx') and person.orca_idx is not None:\
+                        # update position and velocity from og env to orca sim
+                        pos = tuple(person.position[:2])
+                        self.orca_sim.setAgentPosition(person.orca_idx, pos)
+                        self.orca_sim.setAgentPrefVelocity(person.orca_idx, ORCAPolicy.calculate_pref_velocity(pos, person._target_position[:2], self.orca_agent_hyper_params["maxSpeed"]))
+                # let orca sim do one step simulation
+                self.orca_sim.doStep()
+            for person in self.people:
+                person.policy.step(self.sim_dt)
+        # save now position of each person for matplotlib visualization
+        self.history_positions_x.append([person.position[0] for person in self.people])
+        self.history_positions_y.append([person.position[1] for person in self.people])
+        
         done = False
         obs = None
         reward = 0
         info = {}
+        # visualize in 5000th step
+        if self.step_count == 5000:
+            self.visualize()
         return obs, reward, done, info
+
+    def visualize(self):
+        """
+        Visualize the environment using matplotlib.
+        """
+        plt.figure(figsize=(10, 10))
+        plt.scatter(self.history_positions_x, self.history_positions_y)
+        # save as png
+        plt.savefig("people_sim_env.png")
 
 people_sim_env = PeopleEnv(num_persons=2, area_size=(100, 100))
 
@@ -370,3 +280,4 @@ og.sim.enable_viewer_camera_teleoperation()
 
 while True:
     og.sim.step()
+    # if have action, call `og_env.step(action)`
